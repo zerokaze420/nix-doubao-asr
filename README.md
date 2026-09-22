@@ -6,20 +6,20 @@
 
 ```bash
 export DOUBAO_ASR_API_KEY='你的 x-api-key'
-nix run path:/home/tux/code/nix-asr -- --seconds 5
+nix run github:zerokaze420/nix-doubao-asr -- --seconds 5
 ```
 
 只输出文字，不自动输入：
 
 ```bash
-nix run path:/home/tux/code/nix-asr -- --seconds 5 --no-type
+nix run github:zerokaze420/nix-doubao-asr -- --seconds 5 --no-type
 ```
 
 NixOS 配置：
 
 ```nix
 {
-  inputs.nix-asr.url = "path:/home/tux/code/nix-asr";
+  inputs.nix-asr.url = "github:zerokaze420/nix-doubao-asr";
 
   outputs = { nixpkgs, nix-asr, ... }: {
     nixosConfigurations.host = nixpkgs.lib.nixosSystem {
