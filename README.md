@@ -47,6 +47,12 @@ bindsym $mod+space exec env DOUBAO_ASR_API_KEY=$DOUBAO_ASR_API_KEY doubao-voice-
 ```text
 bind = SUPER, SPACE, exec, doubao-voice-input --start
 bindr = SUPER, SPACE, exec, doubao-voice-input --stop
+
+windowrulev2 = float,class:^(doubao-voice-input)$
+windowrulev2 = center,class:^(doubao-voice-input)$
+windowrulev2 = pin,class:^(doubao-voice-input)$
 ```
 
-当前实现依赖 ALSA 的 `arecord` 录音和 Wayland 的 `wtype` 输入。
+运行时会显示一个小浮窗提示当前阶段：`输入中`、`等待中`、`写入中`、`完成`。如果不想显示浮窗，可以加 `--no-ui`。
+
+当前实现依赖 ALSA 的 `arecord` 录音、Wayland 的 `wtype` 输入和 `yad` 状态浮窗。

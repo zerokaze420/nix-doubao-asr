@@ -18,6 +18,7 @@
             name = "doubao-voice-input";
             runtimeInputs = [
               pkgs.alsa-utils
+              pkgs.yad
               pkgs.wtype
               python
             ];

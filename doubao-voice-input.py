@@ -3,6 +3,7 @@ import argparse
 import base64
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -104,12 +105,47 @@ def record(path, seconds, device):
     subprocess.run(cmd, check=True)
 
 
+def can_show_ui(no_ui):
+    return not no_ui and shutil.which("yad") and (os.getenv("WAYLAND_DISPLAY") or os.getenv("DISPLAY"))
+
+
+def show_status(text, no_ui=False, timeout=None):
+    if not can_show_ui(no_ui):
+        return None
+    cmd = [
+        "yad",
+        "--class=doubao-voice-input",
+        "--title=豆包语音",
+        f"--text={text}",
+        "--no-buttons",
+        "--undecorated",
+        "--on-top",
+        "--skip-taskbar",
+        "--center",
+        "--width=260",
+        "--height=92",
+    ]
+    if timeout:
+        cmd += [f"--timeout={timeout}", "--timeout-indicator=none"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return proc.pid
+
+
+def close_status(pid):
+    if not pid:
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+
 def state_path():
     runtime_dir = os.getenv("XDG_RUNTIME_DIR") or tempfile.gettempdir()
     return os.path.join(runtime_dir, "doubao-voice-input.json")
 
 
-def start_recording(device):
+def start_recording(device, no_ui):
     state = state_path()
     if os.path.exists(state):
         die("recording is already running")
@@ -118,7 +154,7 @@ def start_recording(device):
     cmd = ["arecord", "-q", "-D", device, "-f", "S16_LE", "-r", "16000", "-c", "1", audio.name]
     proc = subprocess.Popen(cmd, start_new_session=True)
     with open(state, "w") as f:
-        json.dump({"pid": proc.pid, "audio": audio.name}, f)
+        json.dump({"pid": proc.pid, "audio": audio.name, "status_pid": show_status("输入中", no_ui)}, f)
 
 
 def stop_recording():
@@ -128,6 +164,7 @@ def stop_recording():
     with open(state) as f:
         data = json.load(f)
     os.remove(state)
+    close_status(data.get("status_pid"))
     os.killpg(data["pid"], signal.SIGINT)
     for _ in range(50):
         try:
@@ -138,17 +175,24 @@ def stop_recording():
     return data["audio"]
 
 
-def transcribe_and_type(audio_path, api_key, uid, timeout, no_type):
+def transcribe_and_type(audio_path, api_key, uid, timeout, no_type, no_ui):
+    status_pid = show_status("等待中", no_ui)
     try:
         text = query(submit(audio_path, api_key, uid), api_key, timeout)
     finally:
+        close_status(status_pid)
         try:
             os.remove(audio_path)
         except FileNotFoundError:
             pass
     print(text)
     if not no_type and text:
-        subprocess.run(["wtype", text], check=True)
+        status_pid = show_status("写入中", no_ui)
+        try:
+            subprocess.run(["wtype", text], check=True)
+        finally:
+            close_status(status_pid)
+    show_status("完成", no_ui, timeout=1)
 
 
 def main():
@@ -158,13 +202,14 @@ def main():
     p.add_argument("--uid", default=os.getenv("USER", "nixos"))
     p.add_argument("--timeout", type=int, default=60)
     p.add_argument("--no-type", action="store_true", help="print only; do not type into the active Wayland window")
+    p.add_argument("--no-ui", action="store_true", help="disable the floating status window")
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--start", action="store_true", help="start recording and exit")
     mode.add_argument("--stop", action="store_true", help="stop recording, transcribe, and type")
     args = p.parse_args()
 
     if args.start:
-        start_recording(args.device)
+        start_recording(args.device, args.no_ui)
         return
 
     api_key = os.getenv("DOUBAO_ASR_API_KEY")
@@ -172,13 +217,17 @@ def main():
         die("set DOUBAO_ASR_API_KEY first")
 
     if args.stop:
-        transcribe_and_type(stop_recording(), api_key, args.uid, args.timeout, args.no_type)
+        transcribe_and_type(stop_recording(), api_key, args.uid, args.timeout, args.no_type, args.no_ui)
         return
 
     audio = tempfile.NamedTemporaryFile(prefix="doubao-voice-input-", suffix=".wav", delete=False)
     audio.close()
-    record(audio.name, args.seconds, args.device)
-    transcribe_and_type(audio.name, api_key, args.uid, args.timeout, args.no_type)
+    status_pid = show_status("输入中", args.no_ui)
+    try:
+        record(audio.name, args.seconds, args.device)
+    finally:
+        close_status(status_pid)
+    transcribe_and_type(audio.name, api_key, args.uid, args.timeout, args.no_type, args.no_ui)
 
 
 if __name__ == "__main__":
