@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+import argparse
+import base64
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+
+import requests
+
+BASE = "https://openspeech.bytedance.com/api/v3/auc/bigmodel"
+RESOURCE_ID = "volc.seedasr.auc"
+
+
+def die(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def headers(request_id, api_key):
+    return {
+        "Content-Type": "application/json",
+        "x-api-key": api_key,
+        "X-Api-Resource-Id": RESOURCE_ID,
+        "X-Api-Request-Id": request_id,
+        "X-Api-Sequence": "-1",
+    }
+
+
+def submit(audio_path, api_key, uid):
+    request_id = str(uuid.uuid4())
+    with open(audio_path, "rb") as f:
+        audio = base64.b64encode(f.read()).decode()
+    payload = {
+        "user": {"uid": uid},
+        "audio": {
+            "data": audio,
+            "format": "wav",
+            "codec": "raw",
+            "rate": 16000,
+            "bits": 16,
+            "channel": 1,
+        },
+        "request": {
+            "model_name": "bigmodel",
+            "enable_itn": True,
+            "enable_punc": False,
+            "enable_ddc": False,
+            "enable_speaker_info": False,
+            "enable_channel_split": False,
+            "show_utterances": False,
+            "vad_segment": False,
+            "sensitive_words_filter": "",
+        },
+    }
+    r = requests.post(f"{BASE}/submit", headers=headers(request_id, api_key), json=payload, timeout=60)
+    if r.headers.get("x-api-status-code") not in (None, "20000000") or r.status_code >= 300:
+        die(f"submit failed: http={r.status_code} status={r.headers.get('x-api-status-code')} body={r.text}")
+    return request_id
+
+
+def extract_text(data):
+    if isinstance(data, str):
+        return data
+    if not isinstance(data, dict):
+        return ""
+    for key in ("text", "result", "utterance_text"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    utterances = data.get("utterances")
+    if isinstance(utterances, list):
+        text = "".join(extract_text(x) for x in utterances)
+        if text.strip():
+            return text.strip()
+    for value in data.values():
+        text = extract_text(value)
+        if text.strip():
+            return text.strip()
+    return ""
+
+
+def query(request_id, api_key, timeout):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = requests.post(f"{BASE}/query", headers=headers(request_id, api_key), json={}, timeout=30)
+        status = r.headers.get("x-api-status-code")
+        if status == "20000000":
+            text = extract_text(r.json() if r.text else {})
+            if text:
+                return text
+        elif status not in ("20000001", "20000002", "20000003", None):
+            die(f"query failed: http={r.status_code} status={status} body={r.text}")
+        time.sleep(1)
+    die("query timed out")
+
+
+def record(path, seconds, device):
+    cmd = ["arecord", "-q", "-D", device, "-f", "S16_LE", "-r", "16000", "-c", "1", "-d", str(seconds), path]
+    subprocess.run(cmd, check=True)
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("-s", "--seconds", type=int, default=5)
+    p.add_argument("-d", "--device", default="default")
+    p.add_argument("--uid", default=os.getenv("USER", "nixos"))
+    p.add_argument("--timeout", type=int, default=60)
+    p.add_argument("--no-type", action="store_true", help="print only; do not type into the active Wayland window")
+    args = p.parse_args()
+
+    api_key = os.getenv("DOUBAO_ASR_API_KEY")
+    if not api_key:
+        die("set DOUBAO_ASR_API_KEY first")
+
+    with tempfile.NamedTemporaryFile(suffix=".wav") as f:
+        record(f.name, args.seconds, args.device)
+        text = query(submit(f.name, api_key, args.uid), api_key, args.timeout)
+
+    print(text)
+    if not args.no_type and text:
+        subprocess.run(["wtype", text], check=True)
+
+
+if __name__ == "__main__":
+    main()
