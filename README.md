@@ -34,6 +34,13 @@ NixOS 配置：
 
 然后把 `DOUBAO_ASR_API_KEY` 放到你的 shell、systemd user 环境或密钥管理工具里。
 
+如果通过 Hyprland 快捷键调用，确保 Hyprland 进程能读到这个变量。例如登录后执行：
+
+```bash
+systemctl --user import-environment DOUBAO_ASR_API_KEY
+hyprctl setenv DOUBAO_ASR_API_KEY "$DOUBAO_ASR_API_KEY"
+```
+
 ## 快捷键
 
 固定录音时长，例如在 sway 里：

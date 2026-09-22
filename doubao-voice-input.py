@@ -140,6 +140,14 @@ def close_status(pid):
         pass
 
 
+def api_key_or_die(no_ui):
+    api_key = os.getenv("DOUBAO_ASR_API_KEY")
+    if not api_key:
+        show_status("缺少 API Key", no_ui, timeout=2)
+        die("set DOUBAO_ASR_API_KEY first")
+    return api_key
+
+
 def state_path():
     runtime_dir = os.getenv("XDG_RUNTIME_DIR") or tempfile.gettempdir()
     return os.path.join(runtime_dir, "doubao-voice-input.json")
@@ -212,14 +220,20 @@ def main():
         start_recording(args.device, args.no_ui)
         return
 
-    api_key = os.getenv("DOUBAO_ASR_API_KEY")
-    if not api_key:
-        die("set DOUBAO_ASR_API_KEY first")
-
     if args.stop:
-        transcribe_and_type(stop_recording(), api_key, args.uid, args.timeout, args.no_type, args.no_ui)
+        audio = stop_recording()
+        try:
+            api_key = api_key_or_die(args.no_ui)
+        except SystemExit:
+            try:
+                os.remove(audio)
+            except FileNotFoundError:
+                pass
+            raise
+        transcribe_and_type(audio, api_key, args.uid, args.timeout, args.no_type, args.no_ui)
         return
 
+    api_key = api_key_or_die(args.no_ui)
     audio = tempfile.NamedTemporaryFile(prefix="doubao-voice-input-", suffix=".wav", delete=False)
     audio.close()
     status_pid = show_status("输入中", args.no_ui)
